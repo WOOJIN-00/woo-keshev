@@ -116,10 +116,57 @@ function renderIdentity({ me, devices, sessions } = {}) {
   return root;
 }
 
+const DECISION_LABELS = {
+  allow: '접근 허용 (정책상 허용이며 실제 앱 접속 성공을 보장하지 않음)',
+  deny: '접근 거부',
+  challenge: '추가 인증 또는 확인 필요 (이 앱이 확인 절차를 대신 수행하지 않음)',
+  unknown: '판정 확인 불가 (허용되지 않음)',
+};
+
+function decisionBadge(decision) {
+  if (decision === 'allow') return '[허용]';
+  if (decision === 'deny') return '[거부]';
+  if (decision === 'challenge') return '[추가 확인 필요]';
+  return '[확인 불가]';
+}
+
+function renderDecision({ status, mode, data, error, appId } = {}) {
+  const root = document.createElement('div');
+  root.className = 'student-decision';
+  const modeLabel = Object.hasOwn(MODE_LABELS, mode) ? MODE_LABELS[mode] : null;
+  if (modeLabel) root.append(text('p', `연결 모드: ${modeLabel}`, 'student-mode'));
+
+  if (status === 'idle' || status == null) {
+    root.append(text('p', '앱을 골라 접속을 요청하세요. 아직 요청하지 않았으므로 판정이 없습니다.', 'student-idle'));
+  } else if (status === 'loading') {
+    root.append(text('p', `판정 확인 중${appId ? ` (앱: ${appId})` : ''}`, 'student-loading'));
+  } else if (status === 'error') {
+    const message = error && error.message ? error.message : '확인 불가';
+    root.append(text('p', `[요청 실패] 요청 실패: ${message}`, 'student-error'));
+    root.append(text('p', '이 결과는 접근 거부 판정이 아니며, 접근이 허용되었다는 뜻도 아닙니다. 판정을 받지 못했습니다.', 'student-error'));
+  } else if (status === 'ok' && data && typeof data === 'object') {
+    // 알려진 판정 코드가 아니면 허용처럼 읽히지 않도록 확인 불가로 처리한다.
+    const known = Object.hasOwn(DECISION_LABELS, data.decision);
+    const raw = known ? data.decision : 'unknown';
+    root.append(text('p', `${decisionBadge(raw)} ${DECISION_LABELS[raw]} — 원래 값: ${raw}`, `student-decision-${raw}`));
+    if (!known) root.append(text('p', `서버가 알 수 없는 판정 값을 반환했습니다: ${rawOf(data.decision)}`, 'student-error'));
+    const list = document.createElement('dl');
+    list.append(
+      row('앱', rawOf(data.appId ?? appId)),
+      row('판정 이유', rawOf(data.reason)),
+      row('판정 시각', rawOf(data.checkedAt)),
+    );
+    root.append(list);
+  } else {
+    root.append(text('p', '[확인 불가] 판정 상태를 확인할 수 없습니다. 허용되지 않은 상태로 취급합니다.', 'student-error'));
+  }
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity,
-    renderDecision() { return '학생 구현 대기: 서버의 판정과 이유를 연결하세요.'; },
+    renderDecision,
     renderEvents() { return '학생 구현 대기: 본인 접속·XDR 기록을 연결하세요.'; },
     renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
