@@ -51,7 +51,7 @@
 
 ## 3. 폴더 구조와 작업 위치
 
-이 PC의 앱 폴더(`on-client`)는 `C:\Users\Administrator\Desktop\방어전\방어전\on-client`입니다. 다른 PC에서는 경로가 다릅니다. 아래 "앱 폴더"는 이 폴더를 말합니다.
+앱 폴더는 `package.json`과 `src\server.mjs`가 들어 있는 `on-client` 폴더입니다. 폴더가 놓인 위치는 PC마다 다르므로 이 문서에는 절대경로를 적지 않습니다. 아래 "앱 폴더"는 이 폴더를 말합니다.
 
 이 PC에서는 앱 폴더 자체가 Git 저장소의 최상위입니다 (`git rev-parse --show-toplevel` 결과가 앱 폴더). [실행 확인] 제공 문서 STUDENT_LAUNCH_GUIDE.md는 저장소 최상위가 앱 폴더의 위 폴더라고 설명하지만, 이 PC에서는 다릅니다. 커밋과 제출 준비는 이 PC의 실제 최상위 기준으로 합니다.
 
