@@ -512,6 +512,39 @@ function renderAiConnection({ status, mode, data, error, checkedAt } = {}) {
   return root;
 }
 
+// 18단계에서 근거·규칙·현재 상태 연결을 넓힌다. 지금은 성공·실패·대기만 구분한다.
+function renderExplanation({ event, explanation, checkedAt } = {}) {
+  const root = document.createElement('div');
+  root.className = 'student-explanation';
+  const status = explanation && explanation.status;
+  const modeLabel = explanation && Object.hasOwn(MODE_LABELS, explanation.mode) ? MODE_LABELS[explanation.mode] : null;
+  if (modeLabel) root.append(text('p', `연결 모드: ${modeLabel}`, 'student-mode'));
+  const eventId = event && typeof event.id === 'string' && event.id ? event.id : null;
+  const summary = explanation && explanation.data && typeof explanation.data.summary === 'string' ? explanation.data.summary : null;
+
+  if (status === 'ok' && eventId && summary) {
+    // 성공한 설명에만 사건 ID를 붙여, 실패·대기 화면이 설명된 사건처럼 읽히지 않게 한다.
+    root.setAttribute('data-student-explanation-event', eventId);
+    root.append(text('p', '[설명 수신] AI 사건 설명 (참고용 해석)', 'student-explanation-ok'));
+    const list = document.createElement('dl');
+    list.append(row('사건 ID', eventId), row('요약', summary), row('설명 시각', `${rawOf(checkedAt)} · ${koreanTime(checkedAt)}`));
+    root.append(list);
+  } else if (status === 'error') {
+    const code = safeCode(explanation.error && explanation.error.code);
+    root.append(text('p', `[설명 실패] ${aiErrorGroup(code).label}${eventId ? ` (사건 ID: ${eventId})` : ''}`, 'student-error'));
+    const list = document.createElement('dl');
+    list.append(row('오류 코드', code), row('안내', safeValue(explanation.error && explanation.error.message)));
+    root.append(list, text('p', '보안 기록은 그대로 유지됩니다. 다시 요청하려면 보안 기록에서 「AI 설명 요청」 버튼을 직접 누르세요.', 'student-retry'));
+  } else if (status === 'loading') {
+    root.append(text('p', `[설명 요청 중] AI 사건 설명 요청 중${eventId ? ` (사건 ID: ${eventId})` : ''}`, 'student-loading'));
+  } else if (status === 'idle' || status == null) {
+    root.append(text('p', '[요청 전] 아직 사건 설명을 요청하지 않았습니다. 보안 기록에서 사건의 「AI 설명 요청」 버튼을 직접 누르세요.', 'student-idle'));
+  } else {
+    root.append(text('p', '[확인 불가] AI 설명 결과를 확인할 수 없습니다. 보안 기록은 그대로 유지됩니다.', 'student-error'));
+  }
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity,
@@ -520,7 +553,7 @@ export function createStudentView() {
     renderStatus,
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection,
-    renderExplanation() { return '학생 구현 대기: 선택한 사건의 근거·규칙·현재 상태와 AI 설명을 연결하세요. 제안은 자동 실행하지 않습니다.'; },
+    renderExplanation,
     renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
   };
 }
