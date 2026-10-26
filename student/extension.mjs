@@ -450,6 +450,68 @@ function renderStatus({ devices, sessions, notifications, diagnostics, mode } = 
   return root;
 }
 
+const AI_AUTHORIZATION_LABELS = {
+  test: '시험 연결 점검(test) — 시험용 연결의 모델 응답만 확인했습니다. 실제 앱 권한 확인이 아닙니다.',
+  verified: '앱 권한 확인 후 점검(verified) — 점검 시각 기준으로 앱 권한과 모델 응답을 확인했습니다.',
+};
+const AI_MANUAL_RETRY = '자동으로 다시 점검하지 않습니다. 다시 점검하려면 「현재 API 연결 점검」 버튼을 직접 누르세요.';
+const AI_NOT_EXPLAINED = '연결만 점검했으며 사건 설명은 아직 실행하지 않았습니다. 사건 설명은 보안 기록에서 따로 요청하고 확인합니다.';
+// 제공 화면이 걸러 준 code를 원인별로 나눈다. 목록에 없는 code는 확인 불가로 취급한다.
+const AI_ERROR_GROUPS = [
+  { label: '권한 준비 중', codes: ['ON_AI_PROVISIONING_PENDING'], guide: '학생 계정과 앱 이용 권한은 운영 측에서 발급합니다. 학생 설정 오류가 아닙니다. 담당자에게 계정 연결과 앱 권한 확인을 요청하세요.' },
+  { label: '인증 실패', codes: ['WB_CLCO_AUTH_REQUIRED'], guide: '보호 현황에서 계정 연결을 다시 확인하고, 계속 실패하면 담당자에게 확인하세요. Workbench 열쇠나 원본 열쇠를 복사해 붙이지 마세요.' },
+  { label: '접근 제한', codes: ['WB_CLCO_ACCESS_BLOCKED'], guide: '계정 연결을 다시 확인하고, 담당자에게 앱 이용 권한을 확인하세요.' },
+  { label: '사용량·이용 한도 초과', codes: ['WB_CLCO_COHORT_BUDGET_EXHAUSTED', 'WB_CLCO_LIMIT_REACHED'], guide: '반 사용량 또는 이용 한도에 도달했습니다. 담당자에게 확인하세요.' },
+  { label: '이용 시간 아님', codes: ['WB_CLCO_SESSION_CLOSED'], guide: '현재는 AI 이용 시간이 아닙니다. 이용 시간을 확인하세요.' },
+  { label: '요청 제한·시간 초과·네트워크', codes: ['WB_CLCO_RATE_LIMITED', 'WB_CLCO_TIMEOUT', 'REQUEST_TIMEOUT', 'ENGINE_TIMEOUT', 'TIMEOUT', 'NETWORK_ERROR'], guide: '일시적인 문제일 수 있습니다. 잠시 뒤 직접 다시 점검하세요.' },
+  { label: '점검 취소', tag: '[취소됨]', codes: ['CANCELLED', 'WB_CLCO_CANCELLED', 'REQUEST_CANCELLED'], guide: '점검을 취소했습니다. 이전 점검 결과는 현재 결과가 아닙니다.' },
+  { label: '사용 가능한 모델 없음', codes: ['ON_AI_MODEL_LIST_EMPTY', 'MODEL_NOT_CONFIGURED'], guide: '현재 앱 권한으로 쓸 수 있는 모델이 없습니다. 담당자에게 모델 허용 설정 확인을 요청하세요.' },
+];
+const AI_UNVERIFIED_GROUP = { label: '확인 불가', guide: '연결 상태나 권한을 확인할 수 없습니다. 담당자에게 계정 연결과 앱 권한 확인을 요청하세요.' };
+
+function safeCode(code) {
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : 'UNKNOWN';
+}
+
+function aiErrorGroup(code) {
+  return AI_ERROR_GROUPS.find((g) => g.codes.includes(code)) || AI_UNVERIFIED_GROUP;
+}
+
+function renderAiConnection({ status, mode, data, error, checkedAt } = {}) {
+  // 매번 새 DOM을 반환하므로 재점검 성공·계정 변경(idle) 뒤 이전 결과나 오류 안내가 남지 않는다.
+  const root = document.createElement('div');
+  root.className = 'student-ai-connection';
+  const modeLabel = Object.hasOwn(MODE_LABELS, mode) ? MODE_LABELS[mode] : null;
+  if (modeLabel) root.append(text('p', `연결 모드: ${modeLabel}`, 'student-mode'));
+
+  if (status === 'idle' || status == null) {
+    root.append(text('p', '[점검 전] AI 연결 점검 전 — 아직 점검 결과가 없습니다.', 'student-idle'));
+    root.append(text('p', '자동으로 점검하지 않습니다. 점검하려면 「현재 API 연결 점검」 버튼을 직접 누르세요.', 'student-retry'));
+  } else if (status === 'loading') {
+    root.append(text('p', '[점검 중] AI 연결 점검 중 — 모델 응답을 기다리고 있습니다. 취소하면 늦게 도착한 응답은 표시하지 않습니다.', 'student-loading'));
+  } else if (status === 'error') {
+    const code = safeCode(error && error.code);
+    const group = aiErrorGroup(code);
+    root.append(text('p', `${group.tag || '[점검 실패]'} ${group.label} — 이 결과는 연결 성공이 아닙니다.`, 'student-error'));
+    const list = document.createElement('dl');
+    list.append(row('오류 코드', code), row('안내', safeValue(error && error.message)), row('조치', group.guide));
+    root.append(list, text('p', AI_MANUAL_RETRY, 'student-retry'));
+  } else if (status === 'ok' && data && data.transportChecked === true && Object.hasOwn(AI_AUTHORIZATION_LABELS, data.audienceAuthorization) && Number.isInteger(data.modelCount)) {
+    root.append(text('p', `[모델 응답 확인] ${AI_AUTHORIZATION_LABELS[data.audienceAuthorization]}`, `student-ai-${data.audienceAuthorization}`));
+    const list = document.createElement('dl');
+    list.append(
+      row('응답 모델 수(modelCount)', String(data.modelCount)),
+      row('점검 시각(checkedAt)', `${rawOf(checkedAt)} · ${koreanTime(checkedAt)}`),
+      row('사건 설명', '실행하지 않음'),
+    );
+    root.append(list, text('p', AI_NOT_EXPLAINED, 'student-scope'), text('p', AI_MANUAL_RETRY, 'student-retry'));
+  } else {
+    root.append(text('p', `[확인 불가] ${AI_UNVERIFIED_GROUP.guide}`, 'student-error'));
+    root.append(text('p', AI_MANUAL_RETRY, 'student-retry'));
+  }
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity,
@@ -457,7 +519,7 @@ export function createStudentView() {
     renderEvents,
     renderStatus,
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
-    renderAiConnection() { return '학생 구현 대기: 모델 응답 점검과 실제 사건 설명을 구분하고 AI 오류·취소·수동 복구를 안내하세요.'; },
+    renderAiConnection,
     renderExplanation() { return '학생 구현 대기: 선택한 사건의 근거·규칙·현재 상태와 AI 설명을 연결하세요. 제안은 자동 실행하지 않습니다.'; },
     renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
   };
