@@ -209,6 +209,7 @@ export function createOnServer(serverOptions={}) {
     scanner=createProjectScanner(),assetsRoot=root,clock=()=>new Date(),readTimeoutMs=10000,requestTimeoutMs=15000}=serverOptions;
   if(nativeConfiguration&&(ai!==undefined||resolveAiIdentity!==undefined||readLearnerSupportIdentity!==undefined||appCredentialVault!==undefined||vaultAiConfiguration!==undefined||aiConnectionConfiguration!==undefined||typeof aiEnv.ON_AI_APP_KEY==='string'&&aiEnv.ON_AI_APP_KEY))throw Error('INVALID_SERVER_AI_CONFIGURATION');
   const nativeHost=nativeConfiguration?createNativeHostContext(nativeConfiguration):null;
+  let pcSnapshotInflight=null; // 학생이 추가한 /api/pc-snapshot 용: 조회 중이면 같은 결과를 재사용해 한 번에 하나만 실행한다.
   // c2(#978): host 가 sdpActionStartup({databasePath, policy})을 주면, 이 서버가 만든 SDP host engine 과 genuine native host 를
   // createSdpActionConfiguration 에 그대로 넘긴다(자기 철회 뒤 본인 영수증 포함). identityVersion 은 같은 native host operation 에서 읽는다.
   // 학생 body·header 로 DB·정책·engine·nativeHost 를 고를 수 없다. actionConfiguration 과 함께 주거나 SDP·native host 가 없으면 거절한다.
@@ -686,6 +687,17 @@ export function createOnServer(serverOptions={}) {
         const info=(mappedAi??defaultAi).connectionInfo();
         send(200,{ok:true,data:{requestId,component:'on-client',version:'0.1.0',engine:{mode,code:mode==='disconnected'?'ENGINE_NOT_CONNECTED':mode==='demo'?'DEMO_ONLY':'ADAPTER_CONFIGURED'},
           ai:{configured:info?.configured===true,authorized:false,authorizationRequired:true},checkedAt:clock().toISOString(),workbenchRequiredAtRuntime:false}});return;
+      }
+      if(req.method==='GET'&&url.pathname==='/api/pc-snapshot'){
+        // 제공 파일 수정, 라우트 1개: 학생이 추가한 읽기 전용 경로. student/pc-*.mjs 의 읽기 전용 허용 목록 검사를 그대로 거친다.
+        // 앞의 Host·cross-site 검사를 그대로 받으며 CORS 헤더는 추가하지 않는다. 학생 파일이 없는 앱 버전은 지원하지 않는다고 답한다.
+        let tools;
+        try{tools=await Promise.all([import(new URL('../student/pc-status.mjs',import.meta.url).href),import(new URL('../student/pc-security-status.mjs',import.meta.url).href)]);}
+        catch{send(501,{ok:false,error:{code:'PC_SNAPSHOT_UNSUPPORTED',message:'이 앱 버전에는 PC 조회 기능이 없습니다.',retryable:false}});return;}
+        const inflight=pcSnapshotInflight??=(async()=>{const [status,security]=tools;const [sample,pc]=await Promise.all([status.measureSample(),security.collectPc({timeoutMs:8000})]);return {sample,pc};})().catch(()=>null).finally(()=>{pcSnapshotInflight=null;});
+        const data=await bounded(()=>inflight);
+        if(data===null)throw engineError('SERVICE_UNAVAILABLE','');
+        send(200,{ok:true,data});return;
       }
       if(req.method==='GET'&&url.pathname==='/api/vulnerabilities'){
         const data=await bounded(signal=>scanner.scan({signal}));send(200,{ok:true,data});
