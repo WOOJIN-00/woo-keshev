@@ -82,7 +82,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 **끄기**
 1. 서버를 켠 PowerShell 창을 클릭하고 **Ctrl+C**를 누릅니다. [직접 확인: 사용자가 이 안내서의 끄는 법대로 껐고 정상 동작]
 2. 창을 그냥 닫아도 됩니다. 단, 꺼졌는지는 7장의 ④로 확인합니다.
-3. `-Background`로 켰다면 창이 없습니다. 안내된 프로세스 번호의 `node`를 작업 관리자에서 종료합니다. [소스 확인]
+3. `-Background`로 켰다면 서버 창이 없어서 Ctrl+C를 쓸 수 없습니다. 켤 때 알려 준 프로세스 번호의 `node`를 종료합니다. [직접 확인: 사용자가 `-Background`로 켜고 이 방법으로 껐고 정상 동작]
+   1. 켤 때 나온 안내에서 번호를 적어 둡니다. 번호는 켤 때마다 다릅니다.
+      ```
+      뒤에서 실행 중입니다(프로세스 번호 12345). 끄려면 이 번호의 node 를 작업 관리자에서 종료하세요.
+      ```
+   2. 번호를 못 적어 뒀다면 7장 ①번 방법으로 5189번을 쓰는 프로그램의 번호(`OwningProcess`)를 찾습니다.
+   3. 끄는 방법은 둘 중 하나를 고릅니다.
+      - **작업 관리자**: `Ctrl+Shift+Esc` → 왼쪽 **세부 정보** → **PID** 열에서 적어 둔 번호를 찾아 이름이 `node.exe`인지 확인 → 그 줄을 누르고 **작업 끝내기**. 다른 번호의 `node.exe`는 건드리지 않습니다.
+      - **PowerShell**: 먼저 `Get-Process -Id 12345`로 이름이 `node`인지 확인한 뒤 `Stop-Process -Id 12345`를 실행합니다(12345 자리에 적어 둔 번호).
+   4. 꺼졌는지 확인합니다: `Get-NetTCPConnection -LocalPort 5189 -ErrorAction SilentlyContinue` 결과가 비어 있으면 꺼진 것입니다.
 
 **다시 켜기 (순서대로)**
 1. 이전 서버가 꺼졌는지 확인합니다(7장 ④).
@@ -172,6 +181,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
   - 「기록 지우기」: 정상 동작
   - 서버를 끈 상태에서 조회했을 때 나오는 실패 화면: 정상 동작(확인 후 서버를 다시 켬)
   - 안내서의 「끄는 법」: 정상 동작
+  - `-Background`로 켜고, 안내된 프로세스 번호의 `node`를 종료해 끄기: 정상 동작(작업 관리자와 PowerShell 중 어느 방법인지는 따로 적지 않음)
 - 이전 단계(2·3일차)의 점검 도구 실행 결과도 사용자가 직접 실행해 전달함
 
 ### 미확인
@@ -181,7 +191,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 - 관리자 권한 창에서 실행
 - 와이파이 환경
 - 다른 PC, macOS·Linux
-- 안내서에서 위 직접 확인 범위에 적지 않은 항목: `-Background` 실행, 창을 닫아서 끄기, `ON_PORT`로 포트 바꿔 `npm start`, `npm start`의 시작 신호 문구, Node 버전 불일치·미설치 메시지
+- 안내서에서 위 직접 확인 범위에 적지 않은 항목: 창을 닫아서 끄기, `ON_PORT`로 포트 바꿔 `npm start`, `npm start`의 시작 신호 문구, Node 버전 불일치·미설치 메시지
 - 포장 형태(설치형 앱 등): 포장 명령은 실행하지 않음
 
 ## 11. 한계
