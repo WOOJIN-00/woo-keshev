@@ -992,15 +992,6 @@ async function startPcLookup() {
   if (pcRerender) pcRerender();
 }
 
-function pcStatusLine() {
-  if (pcState.phase === 'idle') return text('p', '[조회 전] 아직 조회하지 않았습니다. 「PC 상태 조회」 버튼을 직접 누르세요. 자동으로 조회하지 않습니다.', 'student-idle');
-  if (pcState.phase === 'loading') return text('p', '[조회 중] 이 PC의 상태를 읽는 중입니다(보통 3~5초). 이전 결과는 현재 결과가 아니므로 표시하지 않습니다.', 'student-loading');
-  const when = pcState.finishedAt ? `조회 시각 ${pcKst(pcState.finishedAt)}` : '조회 시각 확인 불가';
-  if (pcState.outcome === 'ok') return text('p', `[조회됨] 읽을 수 있는 항목을 모두 읽었습니다. ${when}`, 'student-ok');
-  if (pcState.outcome === 'partial') return text('p', `[일부 확인 불가] 일부 항목은 읽지 못했습니다. 아래 「조회하지 못한 항목」을 확인하세요. ${when}`, 'student-error');
-  return text('p', `[조회 실패] PC 상태를 읽지 못했습니다. 값을 짐작하거나 예시로 채우지 않았습니다. ${when}`, 'student-error');
-}
-
 function pcButton() {
   const busy = pcState.phase === 'loading';
   const button = text('button', busy ? '조회 중…' : pcState.phase === 'idle' ? 'PC 상태 조회' : '다시 조회', 'btn');
@@ -1100,7 +1091,7 @@ function buildPcPanel() {
   const title = text('h3', '핵심 3가지: ① 내 PC 상태 · ② 네트워크·방화벽·기록 · ③ 다시 조회와 오류 안내');
   title.id = 'student-pc-panel-title';
   panel.append(title, text('p', '이 칸에는 이 PC에서 실제로 읽은 값만 나옵니다. 조회에 실패하면 예시 값이나 이전 결과 대신 실패한 항목과 다음에 할 일을 보여 줍니다.', 'student-scope'));
-  panel.append(pcButton(), pcStatusLine());
+  panel.append(text('p', '조회는 위쪽 관제 대시보드의 「PC 상태 조회」 버튼으로 합니다. 자동으로 조회하지 않습니다.', 'student-scope'));
   if (pcState.phase === 'done') {
     if (pcState.sample) panel.append(buildPcMeasured(pcState.sample));
     if (pcState.pc) panel.append(buildPcSystem(pcState.pc));
@@ -1109,8 +1100,8 @@ function buildPcPanel() {
   }
   // 다시 그려도 키보드 초점이 사라지지 않게, 버튼에 초점이 있었거나 방금 눌렀다면 새 버튼으로 되돌린다.
   const active = document.activeElement && typeof document.activeElement.hasAttribute === 'function' ? document.activeElement : null;
-  const focusAttr = active && active.hasAttribute('data-student-pc-clear') ? 'data-student-pc-clear'
-    : (active && active.hasAttribute('data-student-pc-refresh')) || pcState.refocus ? 'data-student-pc-refresh' : null;
+  const focusAttr = (active && ['data-student-pc-clear', 'data-student-pc-more', 'data-student-pc-refresh'].find((a) => active.hasAttribute(a)))
+    || (pcState.refocus ? 'data-student-pc-refresh' : null);
   if (focusAttr) {
     pcState.refocus = false;
     queueMicrotask(() => {
@@ -1299,17 +1290,191 @@ function pcPreviousOf(curr) {
   return null;
 }
 
-function pcTable(caption, headers, bodyRows) {
-  const table = document.createElement('table');
-  table.append(text('caption', caption));
+// ----- 화면 틀: 전용 스타일시트 · 짧은 시각 · 상태 줄 · 카드 · 변화 표 · 기록 목록 · 접는 안내 -----
+// 스타일은 이 앱의 보안 정책(style-src 'self')이 허용하는 '새 스타일시트'(adoptedStyleSheets) 한 개로만 넣는다.
+// <style> 요소와 인라인 style 속성은 막히므로 쓰지 않는다. 스타일시트를 넣지 못해도 내용과 동작은 그대로다.
+const KD_CSS = `
+.student-pc-dashboard{container-type:inline-size;container-name:kd;display:grid;gap:14px;min-width:0;margin:0 0 16px;font-size:.875rem;line-height:1.45}
+.student-pc-dashboard *{min-width:0;overflow-wrap:anywhere}
+.student-pc-dashboard h3,.student-pc-dashboard h4,.student-pc-dashboard p,.student-pc-dashboard ul{margin:0}
+.student-pc-dashboard ul{padding:0;list-style:none}
+.kd-title{font-size:1.05rem}
+.kd-tag{font-size:.7rem;font-weight:400;color:var(--muted)}
+.kd-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.kd-status strong{margin-right:2px}
+.kd-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+@container kd (min-width:380px){.kd-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.student-pc-dashboard .kd-card{margin:0;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+.kd-card-title{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 6px;margin-bottom:4px;font-size:.8rem;font-weight:600;color:var(--muted)}
+.kd-value{font-size:1.6rem;line-height:1.2;font-weight:700;font-variant-numeric:tabular-nums}
+.kd-value-text{font-size:1.05rem;line-height:1.35}
+.kd-nowrap{white-space:nowrap}
+.kd-empty{color:var(--muted)}
+.kd-unit{font-size:.8rem;font-weight:400;color:var(--muted)}
+.kd-sub{margin-top:2px;font-size:.8rem;color:var(--muted)}
+.kd-time{margin-top:6px;font-size:.75rem;color:var(--muted)}
+.kd-note{font-size:.8rem;color:var(--muted)}
+.kd-section>h4{margin-bottom:6px;font-size:.95rem}
+.kd-range{margin-bottom:6px;font-size:.8rem;color:var(--muted)}
+.kd-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.8rem}
+.kd-table th,.kd-table td{padding:4px 6px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border)}
+.kd-table th{background:var(--bg);font-weight:600}
+.kd-table th:nth-child(1){width:22%}
+.kd-table th:nth-child(2),.kd-table th:nth-child(3){width:22%}
+.kd-table th:nth-child(4){width:34%}
+.kd-table td{font-variant-numeric:tabular-nums}
+.kd-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.kd-history{display:grid;gap:8px}
+.kd-history>li{padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+.kd-rec-head{display:flex;flex-wrap:wrap;gap:2px 10px;font-weight:600}
+.kd-rec-values{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:4px;font-size:.8rem}
+.kd-k{color:var(--muted)}
+.kd-v{font-variant-numeric:tabular-nums}
+.kd-controls{display:flex;flex-wrap:wrap;gap:8px}
+.kd-details{font-size:.8rem;color:var(--muted)}
+.kd-details summary{cursor:pointer;font-weight:600;color:var(--text)}
+.kd-details ul{margin-top:6px;display:grid;gap:4px}
+`;
+let kdHistoryExpanded = false;
+let kdDetailsOpen = false;
+
+// 새 스타일시트를 문서에 한 번만 붙인다. 지원하지 않거나 막히면 false를 돌려주고 조용히 넘어간다.
+function kdEnsureStyles() {
+  try {
+    if (typeof CSSStyleSheet !== 'function' || !document || !('adoptedStyleSheets' in document)) return false;
+    if (document.__keshevDashboardSheet) return true;
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(KD_CSS);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    document.__keshevDashboardSheet = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function kdEl(tag, className, ...children) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (children.length > 0) node.append(...children);
+  return node;
+}
+
+const kdTimeFormat = typeof Intl === 'object' && Intl && typeof Intl.DateTimeFormat === 'function'
+  ? new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : null;
+
+// "10/28 16:09" 형식(한국 시각). 전체 시각은 요소의 title로 제공한다.
+function kdShortTime(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms) || !kdTimeFormat) return '시각 확인 불가';
+  const parts = kdTimeFormat.formatToParts(new Date(ms));
+  const get = (type) => { const part = parts.find((p) => p.type === type); return part ? part.value : ''; };
+  return `${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+function kdTimeEl(iso) {
+  const node = text('time', kdShortTime(iso));
+  if (Number.isFinite(Date.parse(iso))) { node.setAttribute('datetime', iso); node.setAttribute('title', koreanTime(iso)); }
+  return node;
+}
+
+// ----- 버튼 옆 상태 한 줄 -----
+
+function kdLastLookupText() {
+  if (pcState.phase === 'done' && pcState.currentEntry) return `마지막 조회 ${kdShortTime(pcState.currentEntry.at)}`; // 카드·기록과 같은 시각
+  const last = pcHistory.entries[pcHistory.entries.length - 1];
+  return last ? `마지막 조회 ${kdShortTime(last.at)}(저장된 기록)` : '마지막 조회 없음';
+}
+
+function kdStatus() {
+  const word = pcState.phase === 'idle' ? '조회 전' : pcState.phase === 'loading' ? '조회 중'
+    : pcState.outcome === 'ok' ? '조회됨' : pcState.outcome === 'partial' ? '일부 확인 불가' : '조회 실패';
+  const line = kdEl('p', 'kd-status', text('strong', word), text('span', pcState.phase === 'loading' ? ' · 이전 결과는 표시하지 않습니다' : ` · ${kdLastLookupText()}`));
+  line.setAttribute('role', 'status');
+  return line;
+}
+
+// ----- 상태 카드 4개 -----
+
+function kdCardData(key) {
+  const sample = pcState.sample;
+  const pc = pcState.pc;
+  if (key === 'cpu') {
+    const m = sample && sample.cpu;
+    return m && m.status === 'ok' && pcNum(m.percent) ? { value: `${m.percent.toFixed(1)} %`, note: '', at: sample.measuredAt } : null;
+  }
+  if (key === 'memory') {
+    const m = sample && sample.memory;
+    return m && m.status === 'ok' && pcNum(m.totalBytes) && pcNum(m.freeBytes) && m.freeBytes <= m.totalBytes
+      ? { value: `${pcGiB(m.totalBytes - m.freeBytes)} GiB`, note: '사용', at: sample.measuredAt } : null;
+  }
+  if (key === 'disk') {
+    const m = sample && sample.disk;
+    return m && m.status === 'ok' && pcNum(m.totalBytes) && pcNum(m.freeBytes) && m.freeBytes <= m.totalBytes
+      ? { value: `${pcGiB(m.freeBytes)} GiB`, note: '남음', at: sample.measuredAt } : null;
+  }
+  const m = pc && pc.firewall;
+  const list = m && m.status === 'ok' ? pcList(m.profiles).filter((p) => p && typeof p.Name === 'string' && Object.hasOwn(PC_ENABLED, p.Enabled)) : [];
+  return list.length > 0
+    ? { parts: list.map((p) => `${safeValue(p.Name)} ${PC_ENABLED[p.Enabled]}`), note: '읽기만 함', at: pc.measuredAt, long: true } : null; // 프로필 이름과 상태는 줄바꿈 때 갈라지지 않게 따로 감싼다
+}
+
+function buildKdCards() {
+  const list = kdEl('ul', 'kd-cards');
+  list.setAttribute('role', 'list');
+  list.setAttribute('aria-label', 'PC 상태 카드');
+  let anyUnavailable = false;
+  for (const [key, title] of [['cpu', 'CPU 사용률'], ['memory', '메모리'], ['disk', '디스크'], ['firewall', '방화벽']]) {
+    const card = kdEl('li', 'card kd-card');
+    card.setAttribute('role', 'listitem');
+    const heading = kdEl('h4', 'kd-card-title', text('span', title));
+    if (pcState.phase === 'idle') {
+      card.append(heading, text('p', '조회 전', 'kd-value kd-empty'));
+    } else if (pcState.phase === 'loading') {
+      card.append(heading, text('p', '조회 중', 'kd-value kd-empty'));
+    } else {
+      const v = kdCardData(key);
+      if (v) {
+        heading.append(text('span', '[실제 측정]', 'kd-tag'));
+        const value = kdEl('p', v.long ? 'kd-value kd-value-text' : 'kd-value');
+        if (v.parts) v.parts.forEach((part, i) => { if (i > 0) value.append(text('span', ' · ')); value.append(text('span', part, 'kd-nowrap')); });
+        else value.append(text('span', v.value));
+        if (v.note) value.append(text('span', ` ${v.note}`, 'kd-unit'));
+        card.append(heading, value, kdEl('p', 'kd-time', kdTimeEl(v.at), text('span', ' 측정')));
+      } else {
+        anyUnavailable = true;
+        const reason = pcState.reasons && pcState.reasons[key] ? pcState.reasons[key] : '값 형식을 확인할 수 없습니다';
+        card.append(heading, text('p', '확인 불가', 'kd-value kd-empty'), text('p', reason, 'kd-sub'));
+      }
+    }
+    list.append(card);
+  }
+  return { list, anyUnavailable };
+}
+
+// ----- 직전 조회 대비 변화 -----
+
+const KD_CHANGE_LABEL = { 'CPU 사용률': 'CPU', '메모리 사용량(전체−여유)': '메모리 사용', '디스크 남은 공간': '디스크 남음', '방화벽 켜짐 여부': '방화벽' };
+
+function kdChangeCells(r) {
+  const label = Object.hasOwn(KD_CHANGE_LABEL, r.label) ? KD_CHANGE_LABEL[r.label] : r.label;
+  if (!r.comparable) return [label, '-', '-', `– 비교 불가: ${r.reason}`];
+  if (r.firewall) return [label, r.beforeText, r.afterText, r.changeText === '없음' ? '= 변화 없음' : `◆ ${r.changeText} (바뀜)`];
+  const arrow = r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '=';
+  const word = r.delta > 0 ? '증가' : r.delta < 0 ? '감소' : '변화 없음';
+  const sign = r.delta > 0 ? '+' : r.delta < 0 ? '−' : '±';
+  return [label, `${r.before.toFixed(r.digits)} ${r.shown}`, `${r.after.toFixed(r.digits)} ${r.shown}`, `${arrow} ${sign}${Math.abs(r.delta).toFixed(r.digits)} ${r.unit} ${word}`];
+}
+
+function kdTable(caption, headers, bodyRows) {
+  const table = kdEl('table', 'kd-table', text('caption', caption, 'kd-sr'));
   const head = document.createElement('tr');
   for (const h of headers) {
     const th = text('th', h);
     th.setAttribute('scope', 'col');
     head.append(th);
   }
-  const thead = document.createElement('thead');
-  thead.append(head);
+  const thead = kdEl('thead', '', head);
   const tbody = document.createElement('tbody');
   for (const cells of bodyRows) {
     const tr = document.createElement('tr');
@@ -1320,126 +1485,121 @@ function pcTable(caption, headers, bodyRows) {
   return table;
 }
 
-function buildPcChanges() {
-  const box = document.createElement('section');
-  box.append(text('h4', '직전 조회 대비 변화'));
+function buildKdChanges() {
+  const box = kdEl('section', 'kd-section', text('h4', '직전 조회 대비 변화'));
   const curr = pcState.phase === 'done' ? pcState.currentEntry : null;
-  if (pcState.phase === 'loading') { box.append(text('p', '조회 중입니다. 끝나면 직전 조회와 비교합니다.', 'student-loading')); return box; }
-  if (!curr) { box.append(text('p', '이번 방문에서 아직 조회하지 않아 비교할 값이 없습니다. 아래 기록은 이전에 저장된 값입니다.', 'student-idle')); return box; }
-  if (curr.outcome === 'failed') { box.append(text('p', '이번 조회가 실패해 비교하지 않습니다. 실패한 조회는 값을 만들어 채우지 않습니다.', 'student-error')); return box; }
+  if (pcState.phase === 'loading') { box.append(text('p', '조회 중입니다. 끝나면 직전 조회와 비교합니다.', 'kd-note')); return box; }
+  if (!curr) { box.append(text('p', '이번 방문에서 아직 조회하지 않아 비교할 값이 없습니다.', 'kd-note')); return box; }
+  if (curr.outcome === 'failed') { box.append(text('p', '이번 조회가 실패해 비교하지 않습니다.', 'kd-note')); return box; }
   const prev = pcPreviousOf(curr);
-  if (!prev) { box.append(text('p', '직전 조회 기록이 없어 비교하지 않습니다(처음 조회이거나 기록을 지웠습니다). 한 번 더 조회하면 비교합니다.', 'student-idle')); return box; }
+  if (!prev) { box.append(text('p', '직전 조회 기록이 없어 비교하지 않습니다. 한 번 더 조회하면 비교합니다.', 'kd-note')); return box; }
   const elapsed = Date.parse(curr.at) - Date.parse(prev.at);
-  if (!(elapsed > 0)) { box.append(text('p', '두 조회의 시각 순서를 확인할 수 없어 비교하지 않습니다.', 'student-error')); return box; }
-  box.append(text('p', `${PC_TAG} 직전 ${koreanTime(prev.at)} → 이번 ${koreanTime(curr.at)} (간격 ${pcElapsedText(elapsed)})`));
-  const rows = pcChangeRows(prev, curr).map((r) => {
-    if (!r.comparable) return [r.label, '-', '-', '비교 불가', `확인 불가 — 이유: ${r.reason}`];
-    if (r.firewall) return [r.label, r.beforeText, r.afterText, r.changeText, r.direction];
-    const sign = r.delta > 0 ? '+' : r.delta < 0 ? '−' : '±';
-    return [r.label, `${r.before.toFixed(r.digits)} ${r.shown}`, `${r.after.toFixed(r.digits)} ${r.shown}`, `${sign}${Math.abs(r.delta).toFixed(r.digits)} ${r.unit}`, r.direction];
-  });
-  box.append(pcTable('직전 조회 대비 변화', ['항목', '이전', '현재', '변화량', '방향'], rows));
-  box.append(text('p', '숫자와 변화 방향만 보여 줍니다. 좋고 나쁨은 판정하지 않습니다. CPU 사용률은 1초 순간 구간 값이라 조회마다 크게 달라질 수 있습니다.', 'student-scope'));
+  if (!(elapsed > 0)) { box.append(text('p', '두 조회의 시각 순서를 확인할 수 없어 비교하지 않습니다.', 'kd-note')); return box; }
+  box.append(kdEl('p', 'kd-range', text('span', '직전 '), kdTimeEl(prev.at), text('span', ' → 이번 '), kdTimeEl(curr.at), text('span', ` · 간격 ${pcElapsedText(elapsed)}`)));
+  box.append(kdTable('직전 조회 대비 변화', ['항목', '이전', '현재', '변화'], pcChangeRows(prev, curr).map(kdChangeCells)));
+  box.append(text('p', '▲ 증가 ▼ 감소 = 변화 없음 · 숫자와 방향만 보여 주며 좋고 나쁨은 판정하지 않습니다.', 'kd-note'));
   return box;
 }
 
-// ----- 최근 조회 기록 -----
+// ----- 최근 조회 기록: 한 기록을 두 줄(시각·결과 / 항목 이름이 붙은 값 목록)로 쌓는 목록 -----
 
 const PC_OUTCOME_LABEL = { ok: '조회됨', partial: '일부 확인 불가', failed: '조회 실패' };
 
-function buildPcHistory() {
-  const box = document.createElement('section');
-  box.append(text('h4', '최근 조회 기록 (최대 10개, 최신순)'));
-  const entries = [...pcHistory.entries].reverse();
+function kdMetric(label, value) {
+  const item = kdEl('li', 'kd-metric', text('span', `${label} `, 'kd-k'), text('span', value, 'kd-v'));
+  item.setAttribute('role', 'listitem');
+  return item;
+}
+
+function kdRecordItem(e) {
   const unknown = '확인 불가';
+  const head = kdEl('p', 'kd-rec-head', kdTimeEl(e.at), text('span', ` ${PC_OUTCOME_LABEL[e.outcome]}`));
+  const values = kdEl('ul', 'kd-rec-values',
+    kdMetric('CPU', e.cpu === null ? unknown : `${e.cpu.toFixed(1)} %`),
+    kdMetric('메모리', e.memTotal === null ? unknown : `사용 ${pcGiB(e.memTotal - e.memFree)} GiB · 여유 ${pcGiB(e.memFree)} GiB · 전체 ${pcGiB(e.memTotal)} GiB`),
+    kdMetric('디스크', e.diskTotal === null ? unknown : `${e.diskPath === null ? '' : `${safeValue(e.diskPath)} `}남음 ${pcGiB(e.diskFree)} GiB · 전체 ${pcGiB(e.diskTotal)} GiB`),
+    kdMetric('방화벽', e.fw === null ? unknown : e.fw.map((p) => `${safeValue(p[0])} ${pcFwState(p[1])}`).join(' · ')),
+  );
+  values.setAttribute('role', 'list');
+  values.setAttribute('aria-label', '기록 항목');
+  const item = kdEl('li', '', head, values);
+  item.setAttribute('role', 'listitem');
+  return item;
+}
+
+function buildKdDetails() {
+  const origin = typeof location === 'object' && location && typeof location.origin === 'string' && location.origin ? location.origin : '이 주소';
+  const items = [
+    pcHistory.storage === 'local' ? `기록 보관: 이 브라우저의 localStorage(${safeValue(origin)}). 서버·파일·Git에는 저장되지 않습니다.` : '기록 보관: 이번 방문 동안만(메모리). 새로고침하면 사라집니다.',
+    '저장 내용: 시각, 결과, CPU %, 메모리·디스크의 전체와 남은 바이트, 디스크 드라이브, 방화벽 켜짐 여부. IP·MAC 주소와 무선 이름, 기록 메시지는 저장하지 않습니다. 최대 10개이며 오래된 것부터 지웁니다.',
+    '기록은 주소·포트별로 따로 저장되어, 포트가 바뀌거나 다른 폴더의 앱을 켜면 안 보일 수 있습니다.',
+    '「기록 지우기」는 이 브라우저에 저장된 PC 조회 기록만 지웁니다. 서버·파일·Git에는 영향이 없습니다.',
+    `${PC_TAG}는 이 PC에서 읽은 값이라는 표시입니다. 화면에는 예시 값이 없고, 읽지 못한 값은 「확인 불가」로 표시합니다. 방화벽 등 보안 설정은 읽기만 하며 바꾸지 않습니다.`,
+    '숫자와 변화 방향(▲ 증가 ▼ 감소 = 변화 없음)만 보여 줍니다. 메모리 사용은 전체에서 여유를 뺀 값이고, CPU 사용률은 1초 구간의 순간 값이라 조회마다 크게 달라질 수 있습니다.',
+  ];
+  const list = kdEl('ul', '');
+  list.setAttribute('role', 'list');
+  for (const line of items) {
+    const li = text('li', line);
+    li.setAttribute('role', 'listitem');
+    list.append(li);
+  }
+  const details = kdEl('details', 'kd-details', text('summary', '보관 위치 · 한계 · 읽는 방식'), list);
+  if (kdDetailsOpen) details.setAttribute('open', '');
+  details.addEventListener('toggle', () => { kdDetailsOpen = details.hasAttribute('open'); });
+  return details;
+}
+
+function buildKdHistory() {
+  const box = kdEl('section', 'kd-section', text('h4', '최근 조회 기록'));
+  const entries = [...pcHistory.entries].reverse();
+  const limit = kdHistoryExpanded ? PC_HISTORY_MAX : 5;
   if (entries.length === 0) {
-    box.append(text('p', '저장된 조회 기록이 없습니다.', 'student-empty'));
+    box.append(text('p', '저장된 조회 기록이 없습니다.', 'kd-note'));
   } else {
-    const rows = entries.map((e) => [
-      koreanTime(e.at), PC_OUTCOME_LABEL[e.outcome],
-      e.cpu === null ? unknown : `${e.cpu.toFixed(1)} %`,
-      e.memTotal === null ? unknown : `${pcGiB(e.memTotal - e.memFree)} GiB`,
-      e.diskTotal === null ? unknown : `${pcGiB(e.diskFree)} GiB`,
-      e.fw === null ? unknown : e.fw.map((p) => `${p[0]} ${pcFwState(p[1])}`).join(' · '),
-    ]);
-    box.append(pcTable('최근 조회 기록', ['조회 시각', '결과', 'CPU 사용률', '메모리 사용량', '디스크 남은 공간', '방화벽'], rows));
-    box.append(text('p', `${PC_TAG} 기록의 값은 모두 이 PC에서 실제로 읽은 값입니다. 읽지 못한 항목은 '확인 불가'이며 예시 값으로 채우지 않습니다.`, 'student-scope'));
+    const list = kdEl('ul', 'kd-history');
+    list.id = 'student-pc-history-list';
+    list.setAttribute('role', 'list');
+    list.setAttribute('aria-label', `최근 조회 기록 ${Math.min(entries.length, limit)}개`);
+    for (const e of entries.slice(0, limit)) list.append(kdRecordItem(e));
+    box.append(list);
+  }
+  const controls = kdEl('div', 'kd-controls');
+  if (entries.length > 5) {
+    const more = text('button', kdHistoryExpanded ? '접기(5개)' : `더 보기(최대 ${PC_HISTORY_MAX}개)`, 'btn');
+    more.type = 'button';
+    more.setAttribute('data-student-pc-more', '');
+    more.setAttribute('aria-expanded', String(kdHistoryExpanded));
+    more.setAttribute('aria-controls', 'student-pc-history-list');
+    more.addEventListener('click', () => { kdHistoryExpanded = !kdHistoryExpanded; if (pcRerender) pcRerender(); });
+    controls.append(more);
   }
   const clear = text('button', '기록 지우기', 'btn');
   clear.type = 'button';
   clear.setAttribute('data-student-pc-clear', '');
   if (entries.length === 0) clear.setAttribute('aria-disabled', 'true');
   clear.addEventListener('click', () => { pcClearHistory(); if (pcRerender) pcRerender(); });
-  box.append(clear, text('p', '이 브라우저에 저장된 PC 조회 기록만 지웁니다. 서버·파일·Git에는 영향이 없습니다.', 'student-scope'));
-  if (pcHistory.flash) box.append(text('p', pcHistory.flash, 'student-ok'));
-  const origin = typeof location === 'object' && location && typeof location.origin === 'string' && location.origin ? location.origin : '이 주소';
-  box.append(text('p', pcHistory.storage === 'local' ? `기록 보관: 이 브라우저의 localStorage(${safeValue(origin)})` : '기록 보관: 이번 방문 동안만(메모리)', 'student-scope'));
-  box.append(text('p', '기록은 주소·포트별로 따로 저장되어, 포트가 바뀌거나 다른 폴더의 앱을 켜면 안 보일 수 있습니다.', 'student-scope'));
-  if (pcHistory.notice) box.append(text('p', pcHistory.notice, 'student-error'));
+  controls.append(clear);
+  box.append(controls);
+  if (pcHistory.flash) box.append(text('p', pcHistory.flash, 'kd-note'));
+  if (pcHistory.notice) box.append(text('p', pcHistory.notice, 'kd-note'));
+  box.append(buildKdDetails());
   return box;
-}
-
-// ----- 상태 카드 4개 -----
-
-function pcCardValues(key) {
-  const sample = pcState.sample;
-  const pc = pcState.pc;
-  if (key === 'cpu') {
-    const m = sample && sample.cpu;
-    return m && m.status === 'ok' && pcNum(m.percent)
-      ? { value: `${m.percent.toFixed(1)} %`, detail: `${safeValue(m.windowMs)} ms 구간 평균 · 논리 코어 ${safeValue(m.logicalCores)}개`, at: sample.measuredAt } : null;
-  }
-  if (key === 'memory') {
-    const m = sample && sample.memory;
-    return m && m.status === 'ok' && pcNum(m.totalBytes) && pcNum(m.freeBytes) && m.freeBytes <= m.totalBytes
-      ? { value: `${pcGiB(m.totalBytes - m.freeBytes)} GiB 사용`, detail: `전체 ${pcGiB(m.totalBytes)} GiB · 여유 ${pcGiB(m.freeBytes)} GiB`, at: sample.measuredAt } : null;
-  }
-  if (key === 'disk') {
-    const m = sample && sample.disk;
-    return m && m.status === 'ok' && pcNum(m.totalBytes) && pcNum(m.freeBytes) && m.freeBytes <= m.totalBytes
-      ? { value: `${pcGiB(m.freeBytes)} GiB 남음`, detail: `${safeValue(m.path)} 전체 ${pcGiB(m.totalBytes)} GiB`, at: sample.measuredAt } : null;
-  }
-  const m = pc && pc.firewall;
-  const list = m && m.status === 'ok' ? pcList(m.profiles).filter((p) => p && typeof p.Name === 'string' && Object.hasOwn(PC_ENABLED, p.Enabled)) : [];
-  return list.length > 0
-    ? { value: list.map((p) => `${safeValue(p.Name)} ${PC_ENABLED[p.Enabled]}`).join(' · '), detail: '읽기만 함(바꾸지 않음)', at: pc.measuredAt } : null;
-}
-
-function buildPcCards() {
-  const grid = document.createElement('div');
-  grid.className = 'grid-2';
-  for (const [key, title] of [['cpu', 'CPU 사용률'], ['memory', '메모리'], ['disk', '디스크'], ['firewall', '방화벽']]) {
-    const card = document.createElement('section');
-    card.className = 'card';
-    card.append(text('h4', title));
-    if (pcState.phase === 'idle') {
-      card.append(text('p', '조회 전', 'student-idle'), text('p', '아래 「핵심 3가지」 패널의 「PC 상태 조회」 버튼을 눌러 조회하세요.'));
-    } else if (pcState.phase === 'loading') {
-      card.append(text('p', '조회 중', 'student-loading'));
-    } else {
-      const v = pcCardValues(key);
-      if (v) {
-        card.append(text('strong', v.value), text('p', v.detail), text('p', `${PC_TAG} 측정 시각 ${typeof v.at === 'string' ? koreanTime(v.at) : '확인 불가'}`, 'student-scope'));
-      } else {
-        const reason = pcState.reasons && pcState.reasons[key] ? pcState.reasons[key] : '값 형식을 확인할 수 없습니다';
-        card.append(text('strong', '확인 불가', 'student-error'), text('p', `이유: ${reason}`), text('p', '다음에 할 일은 아래 「핵심 3가지」 패널의 「조회하지 못한 항목과 다음에 할 일」을 보세요.', 'student-scope'));
-      }
-    }
-    grid.append(card);
-  }
-  return grid;
 }
 
 function buildPcDashboard() {
   pcLoadHistory();
+  kdEnsureStyles();
   const box = document.createElement('section');
   box.className = 'student-pc-dashboard';
   box.setAttribute('role', 'group');
   box.setAttribute('aria-labelledby', 'student-pc-dashboard-title');
-  const title = text('h3', '관제 대시보드: 상태 카드 · 직전 조회 대비 변화 · 최근 조회 기록');
+  const title = text('h3', '관제 대시보드', 'kd-title');
   title.id = 'student-pc-dashboard-title';
-  box.append(title, text('p', '카드의 값은 이번 방문에서 조회한 결과만 보여 줍니다. 값은 아래 「핵심 3가지」 패널의 「PC 상태 조회」 버튼을 눌러 조회하며, 자동으로 조회하지 않습니다. 조회에 실패하면 예시 값 대신 「확인 불가」와 다음에 할 일을 보여 줍니다.', 'student-scope'));
-  box.append(buildPcCards(), buildPcChanges(), buildPcHistory());
+  const cards = buildKdCards();
+  box.append(title, kdEl('div', 'kd-bar', pcButton(), kdStatus()), cards.list);
+  if (cards.anyUnavailable) box.append(text('p', '확인 불가 항목의 이유와 다음에 할 일은 아래 「핵심 3가지」 패널의 「조회하지 못한 항목과 다음에 할 일」에 있습니다.', 'kd-note'));
+  box.append(buildKdChanges(), buildKdHistory());
   return box;
 }
 
