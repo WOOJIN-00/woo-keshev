@@ -101,7 +101,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 - 대부분 **서버를 안 끄고 다시 켠 경우**입니다. 먼저 기존 서버 창이 있으면 Ctrl+C로 끕니다.
 - 어떤 프로그램인지 보기: `Get-NetTCPConnection -LocalPort 5189 -State Listen | Select LocalPort,OwningProcess` → 번호로 `Get-Process -Id 번호`
 - 급하면 다른 번호로: `...start-alekov.ps1 -Port 5313` 후 주소도 5313으로 엽니다.
-- 시작 도구는 남의 프로그램을 대신 종료하지 않습니다. [소스 확인]
+- 포트를 이미 쓰는 프로그램이 있으면 시작 도구는 그 프로그램을 끄지 않고 멈춥니다. 직접 끄거나 다른 포트 번호로 실행하세요. [소스 확인]
 
 ② **Node 버전 문제**
 - `node --version`으로 확인합니다. 24.19.0이면 정상입니다. [AI 확인]
