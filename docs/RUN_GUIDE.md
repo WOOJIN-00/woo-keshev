@@ -99,11 +99,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
   포트 5312 를 다른 프로그램이 쓰고 있습니다. 그 프로그램은 그대로 두고, 다른 번호로 실행해 주세요. 예: -Port 5313
   ```
 - 대부분 **서버를 안 끄고 다시 켠 경우**입니다. 먼저 기존 서버 창이 있으면 Ctrl+C로 끕니다.
-- 어떤 프로그램인지 보기(PowerShell에서만 됩니다. 프롬프트 앞에 `PS`가 보여야 하며, 명령 프롬프트(cmd)에서는 "내부 또는 외부 명령이 아닙니다"가 나옵니다):
-  1. `Get-NetTCPConnection -LocalPort 5189 -State Listen -ErrorAction SilentlyContinue | Select LocalPort,OwningProcess`
-     - 표가 나오면 `OwningProcess`가 그 포트를 쓰는 프로그램의 번호입니다.
-     - 아무것도 안 나오면 5189번을 쓰는 프로그램이 없다는 뜻입니다(서버가 꺼진 상태). `-ErrorAction SilentlyContinue`를 빼면 "일치하는 MSFT_NetTCPConnection 개체를 찾지 못했습니다"라는 빨간 오류가 나오는데, 같은 뜻입니다. [직접 확인: 사용자 PC에서 서버가 꺼진 상태로 실행]
-  2. 번호가 나왔다면 `Get-Process -Id 번호`로 프로그램 이름을 봅니다. 우리 앱이면 `node`입니다. [AI 확인: 5189번을 `node`가 쓰고 있었음]
+- **어떤 프로그램이 5189번을 쓰는지 보는 방법** (보기만 하고 아무것도 끄거나 바꾸지 않습니다)
+
+  준비: **PowerShell 창**이어야 합니다. 창의 맨 앞에 `PS C:\...>`처럼 `PS`가 보이면 맞습니다. `C:\...>`만 보이면 명령 프롬프트(cmd)라서 아래 명령이 "내부 또는 외부 명령이 아닙니다"로 실패합니다. 이때는 `powershell`을 입력하고 Enter를 누르면 같은 창이 PowerShell로 바뀝니다.
+
+  1. 서버가 켜져 있는 창은 그대로 두고, **새 PowerShell 창을 하나 더** 엽니다(3장 방법).
+  2. 아래 한 줄을 **통째로 복사해서 붙여 넣고** Enter를 누릅니다. 글자를 지우거나 고치지 마세요(끝에 `-` 같은 글자가 남으면 오류가 납니다).
+     ```
+     Get-NetTCPConnection -LocalPort 5189 -State Listen -ErrorAction SilentlyContinue | Select LocalPort,OwningProcess
+     ```
+  3. 결과를 읽습니다.
+     - **표가 나온 경우** (5189번을 쓰는 프로그램이 있음)
+       ```
+       LocalPort OwningProcess
+       --------- -------------
+            5189          5412
+       ```
+       `OwningProcess` 아래 숫자(예: 5412)를 적어 둡니다. 숫자는 PC마다, 켤 때마다 다릅니다.
+     - **아무것도 안 나온 경우** (5189번을 쓰는 프로그램이 없음 = 서버가 꺼진 상태) 이 상태에서 시작 도구를 실행하면 "포트 사용 중" 없이 켜집니다. 4단계는 할 필요가 없습니다. [직접 확인: 사용자 PC에서 서버가 꺼진 상태로 실행]
+     - 빨간 오류 "일치하는 MSFT_NetTCPConnection 개체를 찾지 못했습니다"는 `-ErrorAction SilentlyContinue`를 빼먹었거나 글자가 틀렸을 때 나옵니다. 아무것도 안 나온 경우와 같은 뜻이거나 입력 실수이니, 2번 줄을 다시 통째로 복사해서 실행합니다.
+  4. 표에서 적어 둔 숫자를 `5412` 자리에 넣어 실행합니다.
+     ```
+     Get-Process -Id 5412
+     ```
+     `ProcessName` 칸에 프로그램 이름이 나옵니다.
+     - `node`이면 우리 앱(이전에 안 끈 서버)입니다. 서버를 켠 창에서 Ctrl+C로 끄고 다시 켭니다. [AI 확인: 5189번을 `node`가 쓰고 있었음]
+     - 다른 이름이면 그 프로그램은 끄지 말고, 아래처럼 다른 포트로 실행합니다.
 - 급하면 다른 번호로: `...start-alekov.ps1 -Port 5313` 후 주소도 5313으로 엽니다.
 - 포트를 이미 쓰는 프로그램이 있으면 시작 도구는 그 프로그램을 끄지 않고 멈춥니다. 직접 끄거나 다른 포트 번호로 실행하세요. [소스 확인]
 
