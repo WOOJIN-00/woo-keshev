@@ -21,7 +21,7 @@
 
 ## 2. 폴더 구조와 작업 위치
 
-작업 위치(앱 폴더): `C:\Users\Administrator\Desktop\방어전\방어전\on-client-pcstatus` (브랜치 `pc-status`)
+작업 위치(앱 폴더): `<내 PC의 작업 폴더>\on-client-pcstatus` (브랜치 `pc-status`)
 
 ```
 on-client-pcstatus\
@@ -43,9 +43,9 @@ on-client-pcstatus\
 
 1. 파일 탐색기에서 아래 경로를 주소 표시줄에 붙여 넣고 Enter를 눌러 앱 폴더를 엽니다.
    ```
-   C:\Users\Administrator\Desktop\방어전\방어전\on-client-pcstatus
+   <내 PC의 작업 폴더>\on-client-pcstatus
    ```
-2. 주소 표시줄에 `powershell`을 입력하고 Enter를 누르면 그 폴더에서 PowerShell이 열립니다. (또는 시작 메뉴에서 PowerShell을 연 뒤 `cd "C:\Users\Administrator\Desktop\방어전\방어전\on-client-pcstatus"`로 이동)
+2. 주소 표시줄에 `powershell`을 입력하고 Enter를 누르면 그 폴더에서 PowerShell이 열립니다. (또는 시작 메뉴에서 PowerShell을 연 뒤 `cd "<내 PC의 작업 폴더>\on-client-pcstatus"`로 이동)
 3. 확인: `Get-Location`의 결과가 앱 폴더 경로여야 합니다.
 
 시작 도구는 `tools` 폴더의 상위가 앱 폴더인지 스스로 확인하고, 아니면 안내 문장을 내고 멈춥니다. [소스 확인]
