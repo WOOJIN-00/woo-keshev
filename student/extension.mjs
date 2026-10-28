@@ -108,7 +108,9 @@ function renderIdentity({ me, devices, sessions } = {}) {
   // 매번 새 DOM을 만들어 반환하므로 앱이 이전 사용자·기기·세션 표시를 통째로 교체한다.
   const root = document.createElement('div');
   root.className = 'student-identity';
+  // 4일차: 핵심 3가지 패널을 이 칸의 맨 위에 둔다. 아래 기존 표시는 그대로다.
   root.append(
+    buildPcPanel(),
     section('내 계정', me, buildMe),
     section('기기 목록', devices, buildDevices),
     section('세션 목록', sessions, buildSessions),
@@ -869,7 +871,246 @@ function renderVulnerabilities({ status, mode, data, error } = {}) {
   return root;
 }
 
-export function createStudentView() {
+// ---------- 4일차: 핵심 3가지 패널 — PC 상태 실측 · 네트워크·방화벽·Windows 기록 · 다시 조회와 오류 안내 ----------
+// 브라우저는 PC를 직접 읽을 수 없어 앱 서버의 GET /api/pc-snapshot을 읽는다. 이 경로는 제공 파일 src/server.mjs에
+// 학생이 추가한 읽기 전용 경로 1개이며, 없는 앱 버전이면 값을 짐작하거나 예시로 채우지 않고 '확인 불가'와 이유,
+// 다음에 할 일을 보여 준다. 자동으로 조회하지 않고 버튼을 누를 때만 조회한다. 화면에는 예시 값을 두지 않는다.
+const PC_TAG = '[실제 측정]';
+const PC_TIMEOUT_MS = 12000;
+const PC_ACCESS_HINT = /UnauthorizedAccess|AccessDenied|ACCESS_DENIED|Access is denied|SecurityException|PermissionDenied/i;
+const PC_ADAPTER_STATUS = { Up: '연결됨', Disconnected: '끊김', Disabled: '사용 안 함', NotPresent: '장치 없음' };
+const PC_CATEGORY = { Public: '공용 네트워크', Private: '개인 네트워크', DomainAuthenticated: '도메인 인증됨' };
+const PC_CONNECTIVITY = { Internet: '인터넷 연결', LocalNetwork: '로컬 네트워크만', NoTraffic: '트래픽 없음', Disconnected: '연결 안 됨' };
+const PC_ENABLED = { True: '켜짐', False: '꺼짐', NotConfigured: '설정 안 됨' };
+const pcState = { phase: 'idle', outcome: null, sample: null, pc: null, sdp: null, failures: [], finishedAt: null, refocus: false };
+let pcRerender = null;
+
+const pcList = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+const pcNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const pcGiB = (bytes) => (bytes / 2 ** 30).toFixed(2);
+const pcMapped = (table, value) => (Object.hasOwn(table, value) ? `${table[value]}(${value})` : `확인 불가(${safeValue(value)})`);
+const pcKst = (iso) => `${secretSafe(iso)} (UTC) · ${koreanTime(iso)}`;
+
+async function pcFetchJson(path) {
+  if (typeof fetch !== 'function') return { ok: false, kind: 'network' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PC_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, { method: 'GET', cache: 'no-store', headers: { accept: 'application/json' }, signal: controller.signal });
+    let json = null;
+    try { json = await response.json(); } catch { json = null; }
+    return { ok: true, status: response.status, json };
+  } catch {
+    return { ok: false, kind: controller.signal.aborted ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pcNext(kind) {
+  if (kind === 'unsupported') return '이 앱 서버에 PC 조회 경로(/api/pc-snapshot)가 없습니다. 개발 복사본이면 앱을 껐다가 다시 켜세요(서버는 켤 때만 코드를 읽습니다). 설치형 앱이면 이 기능이 없는 버전일 수 있으니 PowerShell에서 node student\\pc-status.mjs 와 node student\\pc-security-status.mjs 로 확인하세요.';
+  if (kind === 'host') return '주소창이 http://127.0.0.1:포트/ 또는 http://localhost:포트/ 인지 확인한 뒤 「다시 조회」를 누르세요.';
+  if (kind === 'timeout' || kind === 'network') return '앱 서버가 켜져 있는지 확인한 뒤 「다시 조회」를 누르세요.';
+  if (kind === 'denied') return '관리자 권한이 필요한 항목일 수 있습니다. 바꾸려 하지 않았으니 담당자에게 확인하세요.';
+  return '잠시 뒤 「다시 조회」를 누르세요. 계속되면 PowerShell에서 node student\\pc-security-status.mjs 로 같은 항목을 확인하세요.';
+}
+
+// 서버 경로 응답을 해석한다. 실패하면 { kind, reason }, 성공하면 { data }.
+function pcInterpretRoute(res) {
+  if (!res.ok) return { kind: res.kind, reason: res.kind === 'timeout' ? `${PC_TIMEOUT_MS / 1000}초 안에 응답이 없습니다` : '앱 서버에 연결하지 못했습니다' };
+  const json = res.json && typeof res.json === 'object' ? res.json : null;
+  const code = json && json.error && typeof json.error.code === 'string' ? json.error.code : null;
+  if (res.status === 404 || res.status === 501 || code === 'PC_SNAPSHOT_UNSUPPORTED') return { kind: 'unsupported', reason: `이 앱 서버에는 PC 조회 경로가 없습니다(HTTP ${res.status})` };
+  if (res.status === 403) return { kind: 'host', reason: `앱 서버가 이 주소에서 온 요청을 거절했습니다(${safeCode(code)})` };
+  if (res.status !== 200 || !json || json.ok !== true) return { kind: 'service', reason: `앱 서버가 조회를 처리하지 못했습니다(HTTP ${res.status}, ${safeCode(code)})` };
+  const data = json.data;
+  const metric = (m) => !!m && typeof m === 'object' && (m.status === 'ok' || m.status === 'unavailable');
+  const valid = !!data && !!data.sample && !!data.pc
+    && ['cpu', 'memory', 'disk'].every((k) => metric(data.sample[k])) && ['network', 'firewall', 'events'].every((k) => metric(data.pc[k]));
+  return valid ? { data } : { kind: 'service', reason: '앱 서버 응답의 형식이 예상과 달라 표시하지 않습니다' };
+}
+
+function pcInterpretSdp(res) {
+  if (!res.ok) return { state: 'unavailable', reason: res.kind === 'timeout' ? `${PC_TIMEOUT_MS / 1000}초 안에 응답이 없습니다` : '앱 서버에 연결하지 못했습니다' };
+  const engine = res.status === 200 && res.json && res.json.ok === true && res.json.data && res.json.data.engine;
+  if (!engine || typeof engine.mode !== 'string' || typeof engine.code !== 'string') return { state: 'unavailable', reason: `앱의 진단 응답 형식이 예상과 다릅니다(HTTP ${res.status})` };
+  if (engine.mode === 'disconnected') return { state: 'disconnected', code: safeValue(engine.code) };
+  if (engine.mode === 'demo') return { state: 'demo', code: safeValue(engine.code) };
+  if (engine.mode === 'connected') return { state: 'configured', code: safeValue(engine.code) };
+  return { state: 'unavailable', reason: `알 수 없는 엔진 상태입니다(${safeValue(engine.mode)})` };
+}
+
+function pcCollectFailures(route, sdp) {
+  const out = [];
+  if (route.kind) {
+    out.push({ item: 'PC 상태 실측(CPU·메모리·디스크)', reason: route.reason, next: pcNext(route.kind) });
+    out.push({ item: '네트워크·방화벽·Windows 기록', reason: route.reason, next: pcNext(route.kind) });
+  } else {
+    const { sample, pc } = route.data;
+    const nextFor = (reason) => pcNext(PC_ACCESS_HINT.test(String(reason)) ? 'denied' : 'tool');
+    for (const [m, label] of [[sample.cpu, 'CPU 사용률'], [sample.memory, '메모리'], [sample.disk, '디스크'], [pc.network, '네트워크 구성'], [pc.firewall, '방화벽 설정'], [pc.events, 'Windows 기록 건수']]) {
+      if (m.status === 'unavailable') out.push({ item: label, reason: safeValue(m.reason), next: nextFor(m.reason) });
+    }
+    if (pc.events.status === 'ok') {
+      for (const e of pcList(pc.events.entries)) {
+        if (e && !pcNum(e.cnt) && e.error) out.push({ item: `Windows 기록 ${safeValue(e.log)} ${e.level === 2 ? '오류' : '경고'} 건수`, reason: safeValue(e.error), next: nextFor(e.error) });
+      }
+    }
+  }
+  if (sdp.state === 'unavailable') out.push({ item: '앱의 SDP 연결 상태', reason: sdp.reason, next: pcNext('network') });
+  return out;
+}
+
+async function startPcLookup() {
+  if (pcState.phase === 'loading') return; // 조회 중에 다시 눌러도 요청은 한 번만 나간다
+  Object.assign(pcState, { phase: 'loading', outcome: null, sample: null, pc: null, sdp: null, failures: [] });
+  if (pcRerender) pcRerender();
+  let route;
+  let sdp;
+  try {
+    [route, sdp] = await Promise.all([pcFetchJson('/api/pc-snapshot').then(pcInterpretRoute), pcFetchJson('/api/diagnostics').then(pcInterpretSdp)]);
+  } catch {
+    route = { kind: 'service', reason: '조회 결과를 처리하는 중 오류가 났습니다' };
+    sdp = { state: 'unavailable', reason: '조회 결과를 처리하는 중 오류가 났습니다' };
+  }
+  const failures = pcCollectFailures(route, sdp);
+  Object.assign(pcState, {
+    phase: 'done', finishedAt: new Date().toISOString(), sdp, failures,
+    sample: route.data ? route.data.sample : null, pc: route.data ? route.data.pc : null,
+    outcome: route.kind ? 'failed' : failures.length > 0 ? 'partial' : 'ok',
+  });
+  if (pcRerender) pcRerender();
+}
+
+function pcStatusLine() {
+  if (pcState.phase === 'idle') return text('p', '[조회 전] 아직 조회하지 않았습니다. 「PC 상태 조회」 버튼을 직접 누르세요. 자동으로 조회하지 않습니다.', 'student-idle');
+  if (pcState.phase === 'loading') return text('p', '[조회 중] 이 PC의 상태를 읽는 중입니다(보통 3~5초). 이전 결과는 현재 결과가 아니므로 표시하지 않습니다.', 'student-loading');
+  const when = pcState.finishedAt ? `조회 시각 ${pcKst(pcState.finishedAt)}` : '조회 시각 확인 불가';
+  if (pcState.outcome === 'ok') return text('p', `[조회됨] 읽을 수 있는 항목을 모두 읽었습니다. ${when}`, 'student-ok');
+  if (pcState.outcome === 'partial') return text('p', `[일부 확인 불가] 일부 항목은 읽지 못했습니다. 아래 「조회하지 못한 항목」을 확인하세요. ${when}`, 'student-error');
+  return text('p', `[조회 실패] PC 상태를 읽지 못했습니다. 값을 짐작하거나 예시로 채우지 않았습니다. ${when}`, 'student-error');
+}
+
+function pcButton() {
+  const busy = pcState.phase === 'loading';
+  const button = text('button', busy ? '조회 중…' : pcState.phase === 'idle' ? 'PC 상태 조회' : '다시 조회', 'btn');
+  button.type = 'button';
+  button.setAttribute('data-student-pc-refresh', '');
+  if (busy) { button.setAttribute('aria-disabled', 'true'); button.setAttribute('aria-busy', 'true'); }
+  button.addEventListener('click', () => { pcState.refocus = true; startPcLookup(); });
+  return button;
+}
+
+function buildPcMeasured(sample) {
+  const box = document.createElement('section');
+  box.append(text('h4', '① PC 상태 실측 (CPU·메모리·디스크)'));
+  const list = document.createElement('ul');
+  const { cpu, memory, disk } = sample;
+  const hidden = '확인 불가 — 아래 「조회하지 못한 항목」 참고';
+  list.append(text('li', cpu.status === 'ok' && pcNum(cpu.percent)
+    ? `${PC_TAG} CPU 사용률: ${cpu.percent.toFixed(1)} % (${safeValue(cpu.windowMs)} ms 구간 평균, 논리 코어 ${safeValue(cpu.logicalCores)}개)` : `${PC_TAG} CPU 사용률: ${hidden}`));
+  list.append(text('li', memory.status === 'ok' && pcNum(memory.totalBytes) && pcNum(memory.freeBytes)
+    ? `${PC_TAG} 메모리: 전체 ${pcGiB(memory.totalBytes)} GiB · 여유 ${pcGiB(memory.freeBytes)} GiB · 사용량 ${pcGiB(memory.totalBytes - memory.freeBytes)} GiB(전체−여유로 계산)` : `${PC_TAG} 메모리: ${hidden}`));
+  list.append(text('li', disk.status === 'ok' && pcNum(disk.totalBytes) && pcNum(disk.freeBytes)
+    ? `${PC_TAG} 디스크 ${safeValue(disk.path)}: 전체 ${pcGiB(disk.totalBytes)} GiB · 남은 공간 ${pcGiB(disk.freeBytes)} GiB` : `${PC_TAG} 디스크: ${hidden}`));
+  box.append(list, text('p', `${PC_TAG} 측정 시각: ${sample.measuredAt ? pcKst(sample.measuredAt) : '확인 불가'}`));
+  return box;
+}
+
+function buildPcSystem(pc) {
+  const box = document.createElement('section');
+  box.append(text('h4', '② 네트워크·방화벽·Windows 기록 (읽기만 함)'));
+  const list = document.createElement('ul');
+  const hidden = '확인 불가 — 아래 「조회하지 못한 항목」 참고';
+  if (pc.network.status === 'ok') {
+    const adapters = pcList(pc.network.adapters);
+    const physUp = adapters.filter((a) => a && a.Status === 'Up' && a.Virtual !== true);
+    const wired = physUp.filter((a) => a.MediaType === '802.3').length;
+    const wireless = physUp.filter((a) => /802\.11/.test(String(a.MediaType))).length;
+    const virtUp = adapters.filter((a) => a && a.Status === 'Up' && a.Virtual === true).length;
+    list.append(text('li', `${PC_TAG} 네트워크: 어댑터 ${adapters.length}개 읽음 — 물리 어댑터 연결됨: 유선 ${wired}개 · 무선 ${wireless}개 · 종류 확인 불가 ${physUp.length - wired - wireless}개 / 가상 어댑터 연결됨 ${virtUp}개`));
+    const profiles = pcList(pc.network.profiles);
+    if (profiles.length === 0) list.append(text('li', `${PC_TAG} 연결 범주: 연결 프로필 없음(연결된 네트워크가 없을 수 있음)`));
+    for (const p of profiles) list.append(text('li', `${PC_TAG} 연결 범주: ${pcMapped(PC_CATEGORY, p && p.NetworkCategory)} · IPv4 ${pcMapped(PC_CONNECTIVITY, p && p.IPv4Connectivity)} · IPv6 ${pcMapped(PC_CONNECTIVITY, p && p.IPv6Connectivity)}`));
+    list.append(text('li', `${PC_TAG} 참고: IP·MAC 주소와 무선 이름(SSID)은 읽거나 표시하지 않습니다. 연결성은 Windows가 판단한 값입니다.`));
+  } else {
+    list.append(text('li', `${PC_TAG} 네트워크: ${hidden}`));
+  }
+  if (pc.firewall.status === 'ok') {
+    const profiles = pcList(pc.firewall.profiles);
+    list.append(text('li', profiles.length === 0 ? `${PC_TAG} 방화벽 설정: 읽은 프로필이 없습니다(확인 불가)`
+      : `${PC_TAG} 방화벽 설정: ${profiles.map((p) => `${safeValue(p && p.Name)} ${Object.hasOwn(PC_ENABLED, p && p.Enabled) ? PC_ENABLED[p.Enabled] : '확인 불가'}`).join(' · ')} · 읽기만 함(바꾸지 않음)`));
+    if (profiles.some((p) => p && (p.In === 'NotConfigured' || p.Out === 'NotConfigured'))) list.append(text('li', `${PC_TAG} 참고: 기본 동작이 '설정 안 됨(NotConfigured)'이면 정책으로 지정되지 않았다는 뜻이며 실제 적용되는 기본 동작을 알려 주는 값이 아닙니다.`));
+  } else {
+    list.append(text('li', `${PC_TAG} 방화벽 설정: ${hidden}`));
+  }
+  if (pc.events.status === 'ok') {
+    const countText = (e) => {
+      const name = e.level === 2 ? '오류' : '경고';
+      return pcNum(e.cnt) ? (e.cnt >= 1000 ? `${name} 1000건 이상(조회 상한)` : `${name} ${e.cnt}건`) : `${name} 확인 불가`;
+    };
+    for (const log of ['System', 'Application']) {
+      const entries = pcList(pc.events.entries).filter((e) => e && e.log === log).sort((a, b) => a.level - b.level);
+      list.append(text('li', `${PC_TAG} Windows 기록 ${log}(최근 24시간): ${entries.length === 0 ? '확인 불가(읽은 항목 없음)' : entries.map(countText).join(' · ')}`));
+    }
+  } else {
+    list.append(text('li', `${PC_TAG} Windows 기록: ${hidden}`));
+  }
+  box.append(list, text('p', '안내: Windows 경고·오류 건수는 침해나 공격 탐지 결과가 아닙니다. 드라이버·서비스·앱의 일반적인 오류와 경고도 포함됩니다.', 'student-scope'));
+  return box;
+}
+
+function buildPcSdp(sdp) {
+  const box = document.createElement('section');
+  box.append(text('h4', '앱의 SDP 연결 상태 (PC 조회와 별개)'));
+  let line;
+  if (sdp.state === 'disconnected') line = `SDP 미연결 — 앱의 진단 응답이 연결 없음(${sdp.code})을 알려 줍니다.`;
+  else if (sdp.state === 'demo') line = `예제 모드 — 실제 SDP가 아닙니다(${sdp.code}).`;
+  else if (sdp.state === 'configured') line = `SDP 연결 설정됨(${sdp.code}) — 연결 설정이 켜졌다는 뜻이며 실제 SDP 응답이 성공했다는 확인이 아닙니다.`;
+  else line = `SDP 연결 상태: 확인 불가 — 아래 「조회하지 못한 항목」 참고. 확인 불가는 '미연결'이 아닙니다.`;
+  box.append(text('p', `${PC_TAG} ${line}`), text('p', '위 PC 조회 결과와 SDP 상태는 서로 다른 것을 확인한 결과이며 합치지 않습니다.', 'student-scope'));
+  return box;
+}
+
+function buildPcFailures(failures) {
+  const box = document.createElement('section');
+  box.className = 'student-error';
+  box.append(text('h4', '조회하지 못한 항목과 다음에 할 일'));
+  const list = document.createElement('ul');
+  for (const f of failures) list.append(text('li', `${f.item} — 이유: ${f.reason} / 다음에 할 일: ${f.next}`));
+  box.append(list, text('p', '위 항목은 값을 알 수 없는 상태입니다. 예시 값이나 이전 결과로 대신 채우지 않았습니다.'));
+  return box;
+}
+
+function buildPcPanel() {
+  const panel = document.createElement('section');
+  panel.className = 'student-pc-panel';
+  panel.setAttribute('role', 'group');
+  panel.setAttribute('aria-labelledby', 'student-pc-panel-title');
+  const title = text('h3', '핵심 3가지: ① 내 PC 상태 · ② 네트워크·방화벽·기록 · ③ 다시 조회와 오류 안내');
+  title.id = 'student-pc-panel-title';
+  panel.append(title, text('p', '이 칸에는 이 PC에서 실제로 읽은 값만 나옵니다. 조회에 실패하면 예시 값이나 이전 결과 대신 실패한 항목과 다음에 할 일을 보여 줍니다.', 'student-scope'));
+  panel.append(pcButton(), pcStatusLine());
+  if (pcState.phase === 'done') {
+    if (pcState.sample) panel.append(buildPcMeasured(pcState.sample));
+    if (pcState.pc) panel.append(buildPcSystem(pcState.pc));
+    if (pcState.sdp) panel.append(buildPcSdp(pcState.sdp));
+    if (pcState.failures.length > 0) panel.append(buildPcFailures(pcState.failures));
+  }
+  // 다시 그려도 키보드 초점이 사라지지 않게, 버튼에 초점이 있었거나 방금 눌렀다면 새 버튼으로 되돌린다.
+  const hadFocus = !!(document.activeElement && typeof document.activeElement.hasAttribute === 'function' && document.activeElement.hasAttribute('data-student-pc-refresh'));
+  if (hadFocus || pcState.refocus) {
+    pcState.refocus = false;
+    queueMicrotask(() => {
+      const target = typeof document.querySelector === 'function' ? document.querySelector('[data-student-pc-refresh]') : null;
+      if (target && typeof target.focus === 'function') target.focus();
+    });
+  }
+  return panel;
+}
+
+export function createStudentView({ onChange } = {}) {
+  pcRerender = typeof onChange === 'function' ? onChange : null;
   return {
     renderIdentity,
     renderDecision,
