@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 
 - `-ExecutionPolicy Bypass`는 이 한 번의 실행에만 적용되고 컴퓨터 설정을 바꾸지 않습니다. [소스 확인]
 - 포트를 바꾸려면 `-Port 5313`처럼 붙입니다. 이 안내서의 확인은 `-Port 5312`로 했습니다. [AI 확인]
-- 같은 앱을 `npm start`(`node src/server.mjs`)로도 켤 수 있지만, 이 안내서에서는 실행해 보지 않았습니다. [미확인]
+- 같은 앱을 `npm start`(`node src/server.mjs`)로도 켤 수 있습니다. 사용자가 직접 `npm start`로 켜 보니 사이트가 열렸습니다. [직접 확인] 이때 포트는 기본 5189이고, 다른 번호는 `ON_PORT` 환경변수로 정합니다(`$env:ON_PORT = '5313'` 후 `npm start`). `ON_PORT` 방법은 실행해 보지 않았습니다. [소스 확인 / 미확인] AI는 `npm start`를 실행해 보지 않았습니다.
 
 브라우저 주소: **`http://127.0.0.1:5189/`** (기본 포트 5189. `-Port`를 쓰면 그 번호)
 
@@ -142,11 +142,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 
 ### 사용자가 직접 확인함
 - 5189 서버를 새 코드로 다시 켜자 새 관제 대시보드가 정상으로 나옴: 카드 4개, 변화·기록, 「PC 상태 조회」 버튼 한 곳
+- `npm start`로 켜도 사이트가 열림
 - 이전 단계(2·3일차)의 점검 도구 실행 결과도 사용자가 직접 실행해 전달함
 
 ### 미확인
 - 다른 PC, macOS·Linux, 관리자 권한 창에서 실행, 와이파이 환경
-- Ctrl+C로 끄기, `-Background` 실행, `npm start` 실행, Node 버전 불일치·미설치 메시지
+- Ctrl+C로 끄기, `-Background` 실행, `ON_PORT`로 포트 바꿔 `npm start`, `npm start`의 시작 신호 문구, Node 버전 불일치·미설치 메시지
 - 처음 보는 사람이 이 안내서만 보고 따라 해 본 결과
 - 사용자가 직접 본 항목 중 위 표에 적지 않은 화면(실패 화면, Tab·Enter 조작, 기록 지우기 등)
 - 포장 형태(설치형 앱 등): 포장 명령은 실행하지 않음
