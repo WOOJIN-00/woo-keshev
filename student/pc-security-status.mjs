@@ -64,15 +64,15 @@ $r.events=@{ok=$true;entries=$rows}
 $r | ConvertTo-Json -Depth 6 -Compress`;
 }
 
-const defaultRunPowerShell = (script) => new Promise((resolve) => {
+const defaultRunPowerShell = (script, { timeoutMs = POWERSHELL_TIMEOUT_MS } = {}) => new Promise((resolve) => {
   if (!isReadOnlyScript(script)) { resolve({ ok: false, reason: '읽기 전용 검사를 통과하지 못한 명령이라 실행하지 않았습니다' }); return; }
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   execFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-    { windowsHide: true, timeout: POWERSHELL_TIMEOUT_MS, maxBuffer: 1024 * 1024, encoding: 'utf8' },
+    { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024, encoding: 'utf8' },
     (error, stdout) => {
       if (error) {
         const reason = error.code === 'ENOENT' ? 'powershell.exe를 찾을 수 없습니다'
-          : error.killed ? `PowerShell이 ${POWERSHELL_TIMEOUT_MS / 1000}초 안에 끝나지 않았습니다`
+          : error.killed ? `PowerShell이 ${timeoutMs / 1000}초 안에 끝나지 않았습니다`
             : `PowerShell 실행에 실패했습니다(${typeof error.code === 'string' || typeof error.code === 'number' ? error.code : 'UNKNOWN'})`;
         resolve({ ok: false, reason });
         return;
@@ -80,6 +80,9 @@ const defaultRunPowerShell = (script) => new Promise((resolve) => {
       resolve({ ok: true, stdout });
     });
 });
+
+// 앱 서버의 읽기 전용 경로도 이 실행기만 거친다. 허용 목록 검사를 통과하지 못하면 PowerShell을 띄우지 않는다.
+export { defaultRunPowerShell as runReadOnlyPowerShell };
 
 // ---------- 앱의 SDP 연결 상태 (PC 조회와 별개) ----------
 
@@ -134,9 +137,9 @@ export function parsePc(stdout) {
   };
 }
 
-export async function collectPc({ hours = DEFAULT_HOURS, run = defaultRunPowerShell } = {}) {
+export async function collectPc({ hours = DEFAULT_HOURS, run = defaultRunPowerShell, timeoutMs = POWERSHELL_TIMEOUT_MS } = {}) {
   let result;
-  try { result = await run(buildScript(hours)); } catch { result = { ok: false, reason: 'PowerShell을 실행하는 중 오류가 났습니다' }; }
+  try { result = await run(buildScript(hours), { timeoutMs }); } catch { result = { ok: false, reason: 'PowerShell을 실행하는 중 오류가 났습니다' }; }
   if (!result || result.ok !== true) {
     const why = result && result.reason ? result.reason : 'PowerShell 결과를 받지 못했습니다';
     return { measuredAt: null, sinceIso: null, elevated: null, network: unavailable(why), firewall: unavailable(why), events: unavailable(why) };
@@ -268,6 +271,12 @@ async function selfTest() {
   check('명령: 읽기처럼 보이는 다른 명령(Invoke-Expression)도 거절', !isReadOnlyScript(script + '\nInvoke-Expression "x"'));
   check('명령: IP·MAC·SSID를 읽는 명령이 없음', !/IPAddress|MacAddress|Get-NetIPAddress|SSID|Message/.test(script));
   check('명령: 시간 범위는 1~168 정수만(1.5, 0, 169, 문자열 거절)', throws(() => buildScript(1.5)) && throws(() => buildScript(0)) && throws(() => buildScript(169)) && throws(() => buildScript('24; Remove-Item x')));
+  const rejectedA = await defaultRunPowerShell('Set-NetFirewallProfile -Enabled False');
+  const rejectedB = await defaultRunPowerShell('Get-NetAdapter; Remove-Item C:\\x');
+  check('실행기: 변경 명령은 PowerShell을 띄우기 전에 거절(공개된 실행기에서도 동일)', rejectedA.ok === false && rejectedB.ok === false && rejectedA.reason.includes('읽기 전용 검사'));
+  let seenOptions = null;
+  await collectPc({ hours: 24, timeoutMs: 8000, run: async (script, options) => { seenOptions = options; return { ok: false, reason: 'x' }; } });
+  check('옵션: 대기 시간(timeoutMs)이 실행기에 그대로 전달됨', seenOptions && seenOptions.timeoutMs === 8000);
 
   const adapters = [
     { Name: '물리 유선', Status: 'Up', MediaType: '802.3', Virtual: false, LinkSpeed: '1 Gbps', MacAddress: '00-11-22-33-44-55', IPv4Address: '192.0.2.10' },
