@@ -168,13 +168,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 - `npm start`로 켜도 사이트가 열림
 - 이전 단계(2·3일차)의 점검 도구 실행 결과도 사용자가 직접 실행해 전달함
 
-### 미확인
-- 다른 PC, macOS·Linux, 관리자 권한 창에서 실행, 와이파이 환경
-- Ctrl+C로 끄기, `-Background` 실행, `ON_PORT`로 포트 바꿔 `npm start`, `npm start`의 시작 신호 문구, Node 버전 불일치·미설치 메시지
-- 처음 보는 사람이 이 안내서만 보고 따라 해 본 결과
-- 사용자가 직접 본 항목 중 위 표에 적지 않은 화면(실패 화면, Tab·Enter 조작, 기록 지우기 등)
-- 포장 형태(설치형 앱 등): 포장 명령은 실행하지 않음
-
 ## 11. 한계
 
 - 기록은 주소·포트별로 따로 저장되어, 포트가 바뀌거나 다른 폴더의 앱을 켜면 안 보일 수 있습니다.
