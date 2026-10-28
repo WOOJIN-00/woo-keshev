@@ -99,7 +99,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
   포트 5312 를 다른 프로그램이 쓰고 있습니다. 그 프로그램은 그대로 두고, 다른 번호로 실행해 주세요. 예: -Port 5313
   ```
 - 대부분 **서버를 안 끄고 다시 켠 경우**입니다. 먼저 기존 서버 창이 있으면 Ctrl+C로 끕니다.
-- 어떤 프로그램인지 보기: `Get-NetTCPConnection -LocalPort 5189 -State Listen | Select LocalPort,OwningProcess` → 번호로 `Get-Process -Id 번호`
+- 어떤 프로그램인지 보기(PowerShell에서만 됩니다. 프롬프트 앞에 `PS`가 보여야 하며, 명령 프롬프트(cmd)에서는 "내부 또는 외부 명령이 아닙니다"가 나옵니다):
+  1. `Get-NetTCPConnection -LocalPort 5189 -State Listen -ErrorAction SilentlyContinue | Select LocalPort,OwningProcess`
+     - 표가 나오면 `OwningProcess`가 그 포트를 쓰는 프로그램의 번호입니다.
+     - 아무것도 안 나오면 5189번을 쓰는 프로그램이 없다는 뜻입니다(서버가 꺼진 상태). `-ErrorAction SilentlyContinue`를 빼면 "일치하는 MSFT_NetTCPConnection 개체를 찾지 못했습니다"라는 빨간 오류가 나오는데, 같은 뜻입니다. [직접 확인: 사용자 PC에서 서버가 꺼진 상태로 실행]
+  2. 번호가 나왔다면 `Get-Process -Id 번호`로 프로그램 이름을 봅니다. 우리 앱이면 `node`입니다. [AI 확인: 5189번을 `node`가 쓰고 있었음]
 - 급하면 다른 번호로: `...start-alekov.ps1 -Port 5313` 후 주소도 5313으로 엽니다.
 - 포트를 이미 쓰는 프로그램이 있으면 시작 도구는 그 프로그램을 끄지 않고 멈춥니다. 직접 끄거나 다른 포트 번호로 실행하세요. [소스 확인]
 
