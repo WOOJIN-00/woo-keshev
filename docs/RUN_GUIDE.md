@@ -171,5 +171,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 ## 11. 한계
 
 - 기록은 주소·포트별로 따로 저장되어, 포트가 바뀌거나 다른 폴더의 앱을 켜면 안 보일 수 있습니다.
-- 우리 칸은 오른쪽 절반(약 321~619px)이고, 제공 화면은 창 폭 1024px 미만에서 가로 스크롤이 생깁니다.
 - 이 앱은 Windows PowerShell을 쓰는 읽기 도구라 Windows 밖에서는 동작하지 않을 수 있습니다. [미확인]
