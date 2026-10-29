@@ -873,9 +873,9 @@ function renderVulnerabilities({ status, mode, data, error } = {}) {
 }
 
 // ---------- 4일차: 핵심 3가지 패널 — PC 상태 실측 · 네트워크·방화벽·Windows 기록 · 다시 조회와 오류 안내 ----------
-// 브라우저는 PC를 직접 읽을 수 없어 앱 서버의 GET /api/pc-snapshot을 읽는다. 이 경로는 제공 파일 src/server.mjs에
-// 학생이 추가한 읽기 전용 경로 1개이며, 없는 앱 버전이면 값을 짐작하거나 예시로 채우지 않고 '확인 불가'와 이유,
-// 다음에 할 일을 보여 준다. 자동으로 조회하지 않고 버튼을 누를 때만 조회한다. 화면에는 예시 값을 두지 않는다.
+// 브라우저는 PC를 직접 읽을 수 없어 앱 서버의 GET /api/pc-snapshot을 읽는다. 이 경로는 제공 서버(src/server.mjs)를
+// 고쳐야 열리는데 안내 규칙에 따라 제출 버전에서는 서버를 고치지 않아 연결하지 않았다(ceda9c2에는 있었음). 그래서 404면
+// 값을 짐작하거나 예시로 채우지 않고 '확인 불가'와 이유, 다음에 할 일을 보여 준다. 자동으로 조회하지 않고 버튼을 누를 때만 조회한다. 화면에는 예시 값을 두지 않는다.
 const PC_TAG = '[실제 측정]';
 const PC_TIMEOUT_MS = 12000;
 const PC_ACCESS_HINT = /UnauthorizedAccess|AccessDenied|ACCESS_DENIED|Access is denied|SecurityException|PermissionDenied/i;
@@ -909,7 +909,7 @@ async function pcFetchJson(path) {
 }
 
 function pcNext(kind) {
-  if (kind === 'unsupported') return '이 앱 서버에 PC 조회 경로(/api/pc-snapshot)가 없습니다. 개발 복사본이면 앱을 껐다가 다시 켜세요(서버는 켤 때만 코드를 읽습니다). 설치형 앱이면 이 기능이 없는 버전일 수 있으니 PowerShell에서 node student\\pc-status.mjs 와 node student\\pc-security-status.mjs 로 확인하세요.';
+  if (kind === 'unsupported') return '이 앱의 PC 읽기 경로(/api/pc-snapshot)는 제공 서버를 고쳐야 열립니다. 안내 규칙에 따라 서버를 고치지 않아 연결하지 않았습니다. PowerShell에서 node student\\pc-status.mjs 와 node student\\pc-security-status.mjs 로 같은 항목을 확인할 수 있습니다.';
   if (kind === 'host') return '주소창이 http://127.0.0.1:포트/ 또는 http://localhost:포트/ 인지 확인한 뒤 「다시 조회」를 누르세요.';
   if (kind === 'timeout' || kind === 'network') return '앱 서버가 켜져 있는지 확인한 뒤 「다시 조회」를 누르세요.';
   if (kind === 'denied') return '관리자 권한이 필요한 항목일 수 있습니다. 바꾸려 하지 않았으니 담당자에게 확인하세요.';
@@ -921,7 +921,7 @@ function pcInterpretRoute(res) {
   if (!res.ok) return { kind: res.kind, reason: res.kind === 'timeout' ? `${PC_TIMEOUT_MS / 1000}초 안에 응답이 없습니다` : '앱 서버에 연결하지 못했습니다' };
   const json = res.json && typeof res.json === 'object' ? res.json : null;
   const code = json && json.error && typeof json.error.code === 'string' ? json.error.code : null;
-  if (res.status === 404 || res.status === 501 || code === 'PC_SNAPSHOT_UNSUPPORTED') return { kind: 'unsupported', reason: `이 앱 서버에는 PC 조회 경로가 없습니다(HTTP ${res.status})` };
+  if (res.status === 404 || res.status === 501 || code === 'PC_SNAPSHOT_UNSUPPORTED') return { kind: 'unsupported', reason: `제공 서버를 고치지 않아 PC 읽기 경로를 연결하지 않았습니다(HTTP ${res.status})` };
   if (res.status === 403) return { kind: 'host', reason: `앱 서버가 이 주소에서 온 요청을 거절했습니다(${safeCode(code)})` };
   if (res.status !== 200 || !json || json.ok !== true) return { kind: 'service', reason: `앱 서버가 조회를 처리하지 못했습니다(HTTP ${res.status}, ${safeCode(code)})` };
   const data = json.data;
@@ -1608,6 +1608,8 @@ function buildKdDetails() {
   for (const [heading, nodes] of kdDetailGroups()) body.append(kdEl('div', '', text('h5', heading), ...nodes));
   const notes = [
     pcHistory.storage === 'local' ? `기록 보관: 이 브라우저의 localStorage(${safeValue(origin)}). 서버·파일·Git에는 저장되지 않습니다.` : '기록 보관: 이번 방문 동안만(메모리). 새로고침하면 사라집니다.',
+    '이 제출 버전은 제공 서버를 고치지 않아 PC 값을 읽는 경로(/api/pc-snapshot)를 연결하지 않았습니다. 그래서 카드와 요약은 「확인 불가」로 나옵니다. 값은 PowerShell에서 node student\\pc-status.mjs 와 node student\\pc-security-status.mjs 로 확인할 수 있습니다.',
+    ...(pcHistory.entries.filter((e) => e.cpu !== null).length >= 2 ? ['그래프의 막대는 이전 버전에서 저장된 기록입니다.'] : []),
     '기록은 주소·포트별로 따로 저장되어, 포트가 바뀌거나 다른 폴더의 앱을 켜면 안 보일 수 있습니다.',
     '그래프는 CPU 사용률만 그립니다. 메모리·디스크·방화벽의 이전 조회 값은 저장되지만 이 화면에는 표시하지 않습니다.',
     '저장 내용: 시각, 결과, CPU %, 메모리·디스크의 전체와 남은 바이트, 디스크 드라이브, 방화벽 켜짐 여부. IP·MAC 주소와 무선 이름, 기록 메시지는 저장하지 않습니다. 최대 10개이며 오래된 것부터 지웁니다.',
